@@ -30,6 +30,10 @@ from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 
+tf.compat.v1.enable_eager_execution(
+    config=None, device_policy=None, execution_mode=None
+)
+
 
 ############################################################
 #  Utility Functions
@@ -338,7 +342,7 @@ class ProposalLayer(KE.Layer):
 
 def log2_graph(x):
     """Implementation of Log2. TF doesn't have a native implementation."""
-    return tf.log(x) / tf.log(2.0)
+    return tf.math.log(x) / tf.math.log(2.0)
 
 
 class PyramidROIAlign(KE.Layer):
@@ -548,18 +552,18 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, gt_attr
     positive_roi_bool = (roi_iou_max >= 0.5)
     positive_indices = tf.where(positive_roi_bool)[:, 0]
     # 2. Negative ROIs are those with < 0.5 with every GT box. Skip crowds.
-    negative_indices = tf.where(tf.logical_and(roi_iou_max < 0.5, no_crowd_bool))[:, 0]
+    negative_indices = tf.where(tf.math.logical_and(roi_iou_max < 0.5, no_crowd_bool))[:, 0]
 
     # Subsample ROIs. Aim for 33% positive
     # Positive ROIs
     positive_count = int(config.TRAIN_ROIS_PER_IMAGE *
                          config.ROI_POSITIVE_RATIO)
-    positive_indices = tf.random_shuffle(positive_indices)[:positive_count]
+    positive_indices = tf.random.shuffle(positive_indices)[:positive_count]
     positive_count = tf.shape(positive_indices)[0]
     # Negative ROIs. Add enough to maintain positive:negative ratio.
     r = 1.0 / config.ROI_POSITIVE_RATIO
     negative_count = tf.cast(r * tf.cast(positive_count, tf.float32), tf.int32) - positive_count
-    negative_indices = tf.random_shuffle(negative_indices)[:negative_count]
+    negative_indices = tf.random.shuffle(negative_indices)[:negative_count]
     # Gather selected ROIs
     positive_rois = tf.gather(proposals, positive_indices)
     negative_rois = tf.gather(proposals, negative_indices)
@@ -2080,6 +2084,9 @@ class MaskRCNN():
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
 
+            print(target_bbox)
+            print(target_attr_ids)
+
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
                 [input_rpn_match, rpn_class_logits])
@@ -2102,7 +2109,7 @@ class MaskRCNN():
             outputs = [rpn_class_logits, rpn_class, rpn_bbox,
                        mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask, mrcnn_attr_probs,
                        rpn_rois, output_rois,
-                       rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
+                       rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss, attr_loss]
             model = KM.Model(inputs, outputs, name='mask_rcnn')
         else:
             # Network Heads
