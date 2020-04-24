@@ -1168,7 +1168,7 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
     return loss
 
 
-def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):
+def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):     ## For FGC task
     """MUlti Label Loss for attributes clasification.
 
     target_attr_ids: [batch, num_rois, (10 attributes)]
@@ -1176,11 +1176,8 @@ def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):
     mrcnn_attr_probs: [batch, num_rois, NUM_ATTR]
     """
 
-    print("shapes_from_attr_loss ", target_attr_ids.get_shape(), mrcnn_attr_probs.get_shape())
-
-
-
-    # Reshape to merge batch and roi dimensions for simplicity.
+    # print("shapes_from_attr_loss ", target_attr_ids.get_shape(), mrcnn_attr_probs.get_shape())
+    # # Reshape to merge batch and roi dimensions for simplicity.
     target_class_ids = K.reshape(target_class_ids, (-1,))
     target_attr_ids = K.reshape(target_attr_ids, (-1, K.int_shape(mrcnn_attr_probs)[2]))
     mrcnn_attr_probs = K.reshape(mrcnn_attr_probs, (-1, K.int_shape(mrcnn_attr_probs)[2]))
@@ -1198,14 +1195,15 @@ def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):
     # a = mrcnn_attr_probs.get_shape()
     # print("a", a)
     
+    ## Condition for the case when attributs are NAN are yet to be added..   for FGC
     target_attr_ids = tf.cast(target_attr_ids, dtype = tf.float32)
 
     # Gather the deltas (predicted and true) that contribute to loss
     target_attr_ids = tf.gather(target_attr_ids, positive_roi_ix)
     mrcnn_attr_probs = tf.gather_nd(mrcnn_attr_probs, indices)
-    print("size ", tf.size(target_attr_ids))
+    # print("size ", tf.size(target_attr_ids))
+    
     # categorical_loss
-    print(target_attr_ids.dtype, mrcnn_attr_probs.dtype )
     loss = K.switch(tf.size(target_attr_ids) > 0,
                     K.binary_crossentropy(target=target_attr_ids, output=mrcnn_attr_probs),
                     tf.constant(0.0))
@@ -1818,6 +1816,8 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 batch_gt_masks = np.zeros(
                     (batch_size, gt_masks.shape[0], gt_masks.shape[1],
                      config.MAX_GT_INSTANCES), dtype=gt_masks.dtype)
+                batch_gt_attr_ids = np.zeros(
+                    (batch_size, config.MAX_GT_INSTANCES, config.NUM_ATTR), dtype=gt_attr_ids.dtype)
                 if random_rois:
                     batch_rpn_rois = np.zeros(
                         (batch_size, rpn_rois.shape[0], 4), dtype=rpn_rois.dtype)
@@ -1838,6 +1838,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 gt_class_ids = gt_class_ids[ids]
                 gt_boxes = gt_boxes[ids]
                 gt_masks = gt_masks[:, :, ids]
+                gt_attr_ids = gt_attr_ids[ids]
 
             # Add to batch
             batch_image_meta[b] = image_meta
@@ -1847,6 +1848,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
             batch_gt_class_ids[b, :gt_class_ids.shape[0]] = gt_class_ids
             batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
             batch_gt_masks[b, :, :, :gt_masks.shape[-1]] = gt_masks
+            batch_gt_attr_ids[b, :gt_attr_ids.shape[0]] = gt_attr_ids
             if random_rois:
                 batch_rpn_rois[b] = rpn_rois
                 if detection_targets:
@@ -1859,7 +1861,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
             # Batch full?
             if b >= batch_size:
                 inputs = [batch_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox,
-                          batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
+                          batch_gt_class_ids, batch_gt_boxes, batch_gt_masks, batch_gt_attr_ids]
                 outputs = []
 
                 if random_rois:
