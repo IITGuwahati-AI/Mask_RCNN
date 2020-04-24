@@ -30,9 +30,7 @@ from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 
-tf.compat.v1.enable_eager_execution(
-    config=None, device_policy=None, execution_mode=None
-)
+# tf.compat.v1.enable_eager_execution()
 
 
 ############################################################
@@ -497,7 +495,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, gt_attr
     gt_class_ids: [MAX_GT_INSTANCES] int class IDs
     gt_boxes: [MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized coordinates.
     gt_masks: [height, width, MAX_GT_INSTANCES] of boolean type.
-    gt_attr_ids: [MAX_GT_INSTANCES, (attr1, attr2, ... , attr10)]   int attribute ids
+    gt_attr_ids: [MAX_GT_INSTANCES, [num_attr dimensional one hot vector]]   int attribute ids
 
     Returns: Target ROIs and corresponding class IDs, bounding box shifts,
     and masks.
@@ -506,7 +504,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, gt_attr
     deltas: [TRAIN_ROIS_PER_IMAGE, (dy, dx, log(dh), log(dw))]
     masks: [TRAIN_ROIS_PER_IMAGE, height, width]. Masks cropped to bbox
            boundaries and resized to neural network output size.
-    attr_ids: [TRAIN_ROIS_PER_IMAGE, (10 attributes)]. Integer attr IDs. Zero padded.    ## for FGC
+    attr_ids: [TRAIN_ROIS_PER_IMAGE, [num_attr dimensional one hot vector]]. Integer attr IDs. Zero padded.    ## for FGC
 
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
@@ -688,11 +686,11 @@ class DetectionTargetLayer(KE.Layer):
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # deltas
             (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.MASK_SHAPE[0],
              self.config.MASK_SHAPE[1]),  # masks
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, 10) #attr_ids     ##added by CA for FGC
+            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.NUM_ATTR) #attr_ids     ##added by CA for FGC
         ]
 
     def compute_mask(self, inputs, mask=None):
-        return [None, None, None, None]
+        return [None, None, None, None, None]   ## Fifth None is added for the attributes
 
 
 ############################################################
@@ -1122,6 +1120,9 @@ def mrcnn_class_loss_graph(target_class_ids, pred_class_logits,
     #       images in a batch have the same active_class_ids
     pred_active = tf.gather(active_class_ids[0], pred_class_ids)
 
+    # print("target_class_ids_shape", target_class_ids.get_shape())
+    print("pred_class_logits_shape", pred_class_logits.get_shape())
+
     # Loss
     loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=target_class_ids, logits=pred_class_logits)
@@ -1175,36 +1176,38 @@ def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs):
     mrcnn_attr_probs: [batch, num_rois, NUM_ATTR]
     """
 
-
+    print("shapes_from_attr_loss ", target_attr_ids.get_shape(), mrcnn_attr_probs.get_shape())
 
 
 
     # Reshape to merge batch and roi dimensions for simplicity.
     target_class_ids = K.reshape(target_class_ids, (-1,))
-    target_attr_ids = K.reshape(target_attr_ids, (-1, 10))
+    target_attr_ids = K.reshape(target_attr_ids, (-1, K.int_shape(mrcnn_attr_probs)[2]))
     mrcnn_attr_probs = K.reshape(mrcnn_attr_probs, (-1, K.int_shape(mrcnn_attr_probs)[2]))
-
+    # print("target_class_ids_shape", target_class_ids.get_shape())
+    # print("target_attr_ids_shape", target_attr_ids.get_shape())
+    # print("mrcnn_attr_probs_shape", mrcnn_attr_probs.get_shape())
     # Only positive ROIs contribute to the loss. And only
     # the right class_id of each ROI. Get their indices.
-    positive_roi_ix = tf.where(target_class_ids > 0 & target_attr_ids[:, 0]!= -1)[:, 0]
+    positive_roi_ix = tf.where(target_class_ids > 0)[:, 0]
     positive_roi_class_ids = tf.cast(
         tf.gather(target_class_ids, positive_roi_ix), tf.int64)
     indices = tf.stack([positive_roi_ix, positive_roi_class_ids], axis=1)
 
     ## target_attr_ids to one hot vector
-    target_attr_one_hot = tf.zeros(K.int_shape(mrcnn_attr_probs), tf.int32)
-    for i in range(K.int_shape(target_attr_one_hot)[0]):
-        if target_attr_ids[i][0] == -1:
-            continue
-        target_attr_one_hot[i] = tf.keras.utils.to_categorical(list(target_attr_ids[i]), num_classes = K.int_shape(mrcnn_attr_probs)[2], dtype = tf.int32).sum(axis=0)
+    # a = mrcnn_attr_probs.get_shape()
+    # print("a", a)
+    
+    target_attr_ids = tf.cast(target_attr_ids, dtype = tf.float32)
 
     # Gather the deltas (predicted and true) that contribute to loss
-    target_attr_one_hot = tf.gather(target_attr_one_hot, positive_roi_ix)
+    target_attr_ids = tf.gather(target_attr_ids, positive_roi_ix)
     mrcnn_attr_probs = tf.gather_nd(mrcnn_attr_probs, indices)
-
-    # Smooth-L1 Loss
-    loss = K.switch(tf.size(target_attr_one_hot) > 0,
-                    K.binary_crossentropy(target=target_attr_one_hot, output=mrcnn_attr_probs),
+    print("size ", tf.size(target_attr_ids))
+    # categorical_loss
+    print(target_attr_ids.dtype, mrcnn_attr_probs.dtype )
+    loss = K.switch(tf.size(target_attr_ids) > 0,
+                    K.binary_crossentropy(target=target_attr_ids, output=mrcnn_attr_probs),
                     tf.constant(0.0))
     loss = K.mean(loss)
     return loss
@@ -1279,7 +1282,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     """
     # Load image and mask
     image = dataset.load_image(image_id)
-    mask, class_ids = dataset.load_mask(image_id)
+    mask, class_ids, attr_ids = dataset.load_mask(image_id)
     original_shape = image.shape
     image, window, scale, padding, crop = utils.resize_image(
         image,
@@ -1333,6 +1336,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     _idx = np.sum(mask, axis=(0, 1)) > 0
     mask = mask[:, :, _idx]
     class_ids = class_ids[_idx]
+    attr_ids = attr_ids[_idx]
     # Bounding boxes. Note that some boxes might be all zeros
     # if the corresponding mask got cropped out.
     # bbox: [num_instances, (y1, x1, y2, x2)]
@@ -1353,7 +1357,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     image_meta = compose_image_meta(image_id, original_shape, image.shape,
                                     window, scale, active_class_ids)
 
-    return image, image_meta, class_ids, bbox, mask
+    return image, image_meta, class_ids, bbox, mask, attr_ids
 
 
 def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
@@ -1768,12 +1772,12 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
 
             # If the image source is not to be augmented pass None as augmentation
             if dataset.image_info[image_id]['source'] in no_augmentation_sources:
-                image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
+                image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_attr_ids = \
                 load_image_gt(dataset, config, image_id, augment=augment,
                               augmentation=None,
                               use_mini_mask=config.USE_MINI_MASK)
             else:
-                image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
+                image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_attr_ids = \
                     load_image_gt(dataset, config, image_id, augment=augment,
                                 augmentation=augmentation,
                                 use_mini_mask=config.USE_MINI_MASK)
@@ -1960,7 +1964,7 @@ class MaskRCNN():
             # 4. GT Attribute IDS
             #[batch, MAX_GT_INSTANCES, (attr1, attr2, ...... , attr10)]   ## we consider that no object will have more than 10 attributes. We will put -1 to padd it to 10
             input_gt_attr_ids = KL.Input(
-                shape=[None, 10], name="input_gt_attr_ids", dtype=tf.int32)
+                shape=[None, config.NUM_ATTR], name="input_gt_attr_ids", dtype=tf.int32)
 
 
         elif mode == "inference":
@@ -2013,6 +2017,8 @@ class MaskRCNN():
         else:
             anchors = input_anchors
 
+
+        
         # RPN Model
         rpn = build_rpn_model(config.RPN_ANCHOR_STRIDE,
                               len(config.RPN_ANCHOR_RATIOS), config.TOP_DOWN_PYRAMID_SIZE)
@@ -2088,6 +2094,7 @@ class MaskRCNN():
             print(target_attr_ids)
 
             # Losses
+
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
                 [input_rpn_match, rpn_class_logits])
             rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
@@ -2100,6 +2107,7 @@ class MaskRCNN():
                 [target_mask, target_class_ids, mrcnn_mask])
             attr_loss = KL.Lambda(lambda x: mrcnn_attr_loss_graph(*x), name="mrcnn_attr_loss")(
                 [target_attr_ids, target_class_ids, mrcnn_attr_probs])   # TODO: over here.. for CA
+            # tf.compat.v1.disable_eager_execution()
 
             # Model
             inputs = [input_image, input_image_meta,
@@ -2247,7 +2255,7 @@ class MaskRCNN():
         self.keras_model._per_input_losses = {}
         loss_names = [
             "rpn_class_loss",  "rpn_bbox_loss",
-            "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
+            "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss", "mrcnn_attr_loss"]
         for name in loss_names:
             layer = self.keras_model.get_layer(name)
             if layer.output in self.keras_model.losses:
@@ -2279,7 +2287,7 @@ class MaskRCNN():
             loss = (
                 tf.reduce_mean(layer.output, keepdims=True)
                 * self.config.LOSS_WEIGHTS.get(name, 1.))
-            self.keras_model.metrics_tensors.append(loss)
+            self.keras_model.add_metric(loss, name)
 
     def set_trainable(self, layer_regex, keras_model=None, indent=0, verbose=1):
         """Sets model layers as trainable if their names match

@@ -303,10 +303,9 @@ def display_top_masks(image, mask, class_ids, attr_ids, class_names, attr_names,
         attr_name = ""
         
         if i< len(top_attr_ids):
-            for j in list(np.array(attr_id)):
-                if j==-1:
-                    continue
-                attr_name = attr_name + "_" + attr_names[j] if j<=234 else attr_name + "_" + attr_names[j-46]
+            for i, j in enumerate(list(np.array(attr_id))):
+                if j==1:
+                    attr_name = attr_name + "_" + attr_names[i]
         
         print("attr_name", attr_name)
         # Pull masks of instances belonging to the same class.
