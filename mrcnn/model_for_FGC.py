@@ -1121,7 +1121,7 @@ def mrcnn_class_loss_graph(target_class_ids, pred_class_logits,
     pred_active = tf.gather(active_class_ids[0], pred_class_ids)
 
     # print("target_class_ids_shape", target_class_ids.get_shape())
-    print("pred_class_logits_shape", pred_class_logits.get_shape())
+    # print("pred_class_logits_shape", pred_class_logits.get_shape())
 
     # Loss
     loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
@@ -1144,10 +1144,14 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
     target_class_ids: [batch, num_rois]. Integer class IDs.
     pred_bbox: [batch, num_rois, num_classes, (dy, dx, log(dh), log(dw))]
     """
+    print("target_bbox", target_bbox.get_shape())
+    print("pred_bbox", pred_bbox.get_shape())
     # Reshape to merge batch and roi dimensions for simplicity.
     target_class_ids = K.reshape(target_class_ids, (-1,))
     target_bbox = K.reshape(target_bbox, (-1, 4))
     pred_bbox = K.reshape(pred_bbox, (-1, K.int_shape(pred_bbox)[2], 4))
+    print("target_bbox", target_bbox.get_shape())
+    print("pred_bbox", pred_bbox.get_shape())
 
     # Only positive ROIs contribute to the loss. And only
     # the right class_id of each ROI. Get their indices.
@@ -1159,6 +1163,8 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
     # Gather the deltas (predicted and true) that contribute to loss
     target_bbox = tf.gather(target_bbox, positive_roi_ix)
     pred_bbox = tf.gather_nd(pred_bbox, indices)
+    print("target_bbox", target_bbox.get_shape())
+    print("pred_bbox", pred_bbox.get_shape())
 
     # Smooth-L1 Loss
     loss = K.switch(tf.size(target_bbox) > 0,
@@ -1175,12 +1181,13 @@ def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs): 
     target_class_ids: [batch, num_rois]. Integer class IDs.
     mrcnn_attr_probs: [batch, num_rois, NUM_ATTR]
     """
-
+    print("mrcnn_attr_probs", mrcnn_attr_probs.get_shape())
     # print("shapes_from_attr_loss ", target_attr_ids.get_shape(), mrcnn_attr_probs.get_shape())
     # # Reshape to merge batch and roi dimensions for simplicity.
     target_class_ids = K.reshape(target_class_ids, (-1,))
     target_attr_ids = K.reshape(target_attr_ids, (-1, K.int_shape(mrcnn_attr_probs)[2]))
     mrcnn_attr_probs = K.reshape(mrcnn_attr_probs, (-1, K.int_shape(mrcnn_attr_probs)[2]))
+    print("mrcnn_attr_probs", mrcnn_attr_probs.get_shape())
     # print("target_class_ids_shape", target_class_ids.get_shape())
     # print("target_attr_ids_shape", target_attr_ids.get_shape())
     # print("mrcnn_attr_probs_shape", mrcnn_attr_probs.get_shape())
@@ -1200,9 +1207,10 @@ def mrcnn_attr_loss_graph(target_attr_ids, target_class_ids, mrcnn_attr_probs): 
 
     # Gather the deltas (predicted and true) that contribute to loss
     target_attr_ids = tf.gather(target_attr_ids, positive_roi_ix)
-    mrcnn_attr_probs = tf.gather_nd(mrcnn_attr_probs, indices)
+    mrcnn_attr_probs = tf.gather(mrcnn_attr_probs, positive_roi_ix)
     # print("size ", tf.size(target_attr_ids))
-    
+    print("target_attr_ids", target_attr_ids.get_shape())
+    print("mrcnn_attr_probs", mrcnn_attr_probs.get_shape())
     # categorical_loss
     loss = K.switch(tf.size(target_attr_ids) > 0,
                     K.binary_crossentropy(target=target_attr_ids, output=mrcnn_attr_probs),
@@ -1221,6 +1229,8 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
                 with values from 0 to 1.
     """
     # Reshape for simplicity. Merge first two dimensions into one.
+    print("target_masks", target_masks.get_shape())
+    print("pred_masks", pred_masks.get_shape())
     target_class_ids = K.reshape(target_class_ids, (-1,))
     mask_shape = tf.shape(target_masks)
     target_masks = K.reshape(target_masks, (-1, mask_shape[2], mask_shape[3]))
@@ -1228,8 +1238,12 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     pred_masks = K.reshape(pred_masks,
                            (-1, pred_shape[2], pred_shape[3], pred_shape[4]))
     # Permute predicted masks to [N, num_classes, height, width]
+    print("target_masks", target_masks.get_shape())
+    print("pred_masks", pred_masks.get_shape())
     pred_masks = tf.transpose(pred_masks, [0, 3, 1, 2])
 
+    print("target_masks", target_masks.get_shape())
+    print("pred_masks", pred_masks.get_shape())
     # Only positive ROIs contribute to the loss. And only
     # the class specific mask of each ROI.
     positive_ix = tf.where(target_class_ids > 0)[:, 0]
@@ -1240,7 +1254,8 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     # Gather the masks (predicted and true) that contribute to loss
     y_true = tf.gather(target_masks, positive_ix)
     y_pred = tf.gather_nd(pred_masks, indices)
-
+    print("target_masks", target_masks.get_shape())
+    print("pred_masks", pred_masks.get_shape())
     # Compute binary cross entropy. If no positive ROIs, then return 0.
     # shape: [batch, roi, num_classes]
     loss = K.switch(tf.size(y_true) > 0,

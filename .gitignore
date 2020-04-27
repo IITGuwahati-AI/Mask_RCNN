@@ -6,6 +6,7 @@ results/
 temp/
 test/
 tf114/
+fashion20*/
 
 #test_files
 test2.ipynb
